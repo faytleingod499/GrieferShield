@@ -1,0 +1,10 @@
+{
+    "Id": "GrieferShield",
+    "PackPath": "GrieferShield.pck",
+    "Metadata": {
+        "Name": "Griefer Shield",
+        "Author": "Fayt",
+        "Version": "1.0.0",
+        "Description": "Protects you from griefers: blocks the sound exploit (map vanishing, white screen), log floods that fill your disk, and action floods, and keeps backups of your saves. Works on any server. This mod was created with the assistance of AI."
+    }
+}
