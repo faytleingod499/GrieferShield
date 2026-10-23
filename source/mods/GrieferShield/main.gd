@@ -16,7 +16,7 @@ extends Node
 # What it can't stop: a "decompression bomb" crashes the game while it unpacks the packet, before any mod sees it.
 # A server running Packet Guard bans whoever sends one.
 
-const VERSION = "1.0.0"
+const VERSION = "1.1.0"
 const MAX_TEXT = 4096              # the longest text the real game ever sends in an action is a chat bubble (~512)
 const MAX_ACTION_NAME = 256
 const KEEP_FOR_MISSING = 32        # actions kept for a character that isn't here (yet): the game dumps the pile past 128
@@ -105,16 +105,42 @@ func _attack_in(entry):
 	if action.length() > MAX_ACTION_NAME:
 		return "an action with a " + str(action.length()) + " character name"
 	var params = entry[1]
+	# a node path (or an object) anywhere: the game never sends one, and as a sound name it moves any node in your game
+	if _has_forbidden(params, 0):
+		return "the sound exploit (a node path sent as a value in " + action.left(40) + ")"
 	if action == "_play_sfx":
 		var sound = null
 		if typeof(params) == TYPE_ARRAY and params.size() > 0:
 			sound = params[0]
+		if sound != null and typeof(sound) != TYPE_STRING:
+			return "the sound exploit (a sound name that is not text)"
 		if typeof(sound) == TYPE_STRING and safe_sound.search(sound) == null:
 			return "the sound exploit (a sound named \"" + sound.left(40) + "\")"
+	# names looked up in the game's lists and nodes must be text
+	if action in ["_play_particle", "_face_emote", "_talk", "_sync_create_bubble", "_sync_level_bubble"]:
+		if typeof(params) != TYPE_ARRAY or params.size() == 0 or typeof(params[0]) != TYPE_STRING:
+			return "the wrong kind of value in " + action.left(40)
 	var longest = _longest_text(params, 0)
 	if longest > MAX_TEXT:
 		return "the log flood (" + str(longest) + " characters of text in " + action.left(40) + ")"
 	return ""
+
+
+func _has_forbidden(value, depth):
+	if depth > 16:
+		return false
+	match typeof(value):
+		TYPE_NODE_PATH, TYPE_OBJECT, TYPE_RID:
+			return true
+		TYPE_ARRAY:
+			for item in value:
+				if _has_forbidden(item, depth + 1):
+					return true
+		TYPE_DICTIONARY:
+			for key in value.keys():
+				if _has_forbidden(key, depth + 1) or _has_forbidden(value[key], depth + 1):
+					return true
+	return false
 
 
 func _longest_text(value, depth):
