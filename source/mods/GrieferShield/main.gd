@@ -16,7 +16,7 @@ extends Node
 # What it can't stop: a "decompression bomb" crashes the game while it unpacks the packet, before any mod sees it.
 # A server running Packet Guard bans whoever sends one.
 
-const VERSION = "1.1.0"
+const VERSION = "1.2.0"
 const MAX_TEXT = 4096              # the longest text the real game ever sends in an action is a chat bubble (~512)
 const MAX_ACTION_NAME = 256
 const KEEP_FOR_MISSING = 32        # actions kept for a character that isn't here (yet): the game dumps the pile past 128
@@ -70,7 +70,7 @@ func _scan_actions():
 		return
 	var here = {}
 	for actor in get_tree().get_nodes_in_group("actor"):
-		here[actor.get("actor_id")] = true
+		here[actor.get("actor_id")] = actor
 	for actor_id in queues.keys():
 		var queue = queues[actor_id]
 		if typeof(queue) != TYPE_ARRAY or queue.empty():
@@ -82,7 +82,7 @@ func _scan_actions():
 			var sender = int(entry[2])
 			if blocked.has(sender):
 				continue
-			var why = _attack_in(entry)
+			var why = _attack_in(entry, here)
 			if why != "":
 				_block(sender, why)
 				continue
@@ -98,7 +98,7 @@ func _scan_actions():
 
 
 # what's wrong with one action, or "" when it's fine
-func _attack_in(entry):
+func _attack_in(entry, here = {}):
 	var action = entry[0]
 	if typeof(action) != TYPE_STRING:
 		return ""
@@ -108,6 +108,10 @@ func _attack_in(entry):
 	# a node path (or an object) anywhere: the game never sends one, and as a sound name it moves any node in your game
 	if _has_forbidden(params, 0):
 		return "the sound exploit (a node path sent as a value in " + action.left(40) + ")"
+	if action == "_wipe_actor":
+		var why = _bad_wipe(params, here)
+		if why != "":
+			return why
 	if action == "_play_sfx":
 		var sound = null
 		if typeof(params) == TYPE_ARRAY and params.size() > 0:
@@ -124,6 +128,27 @@ func _attack_in(entry):
 	if longest > MAX_TEXT:
 		return "the log flood (" + str(longest) + " characters of text in " + action.left(40) + ")"
 	return ""
+
+
+# "_wipe_actor" deletes an actor in the game of whoever owns it. The real game uses it on a fish spot, a mound, a bug or a
+# prop it placed itself, never on a player. A griefer sends it for another player's character or their props.
+func _bad_wipe(params, here):
+	if typeof(params) != TYPE_ARRAY or params.size() != 1 or typeof(params[0]) != TYPE_INT:
+		return "the wipe exploit (a wipe without a plain actor number)"
+	var target = here.get(params[0], null)
+	if target == null or not is_instance_valid(target):
+		return ""
+	if not target.get("controlled"):
+		return "" # not ours, the game ignores it anyway
+	var kind = str(target.get("actor_type"))
+	if kind == "player":
+		return "the wipe exploit (tried to delete your character)"
+	var world = target.get("world")
+	if world != null and typeof(world.get("ACTOR_BANK")) == TYPE_DICTIONARY:
+		var bank = world.ACTOR_BANK.get(kind, null)
+		if bank != null and bank.size() > 1 and bank[1]:
+			return "" # a fish spot, a metal spot...: only the host has them, and players do wipe those
+	return "the wipe exploit (tried to delete your " + kind.left(30) + ")"
 
 
 func _has_forbidden(value, depth):
