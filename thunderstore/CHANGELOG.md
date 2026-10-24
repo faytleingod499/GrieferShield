@@ -1,3 +1,6 @@
+## 1.3.1
+- Fixes a false positive: the game sends the level-up bubble with no values, and 1.3.0 treated that as an attack and blocked the player who levelled up. Empty level-up bubbles are now allowed.
+
 ## 1.3.0
 - Log flood fallback: the game writes whole malformed packets into godot.log, which a griefer can use to fill your disk
   without sending anything this mod could inspect. If godot.log suddenly grows by several MB, the player sending the

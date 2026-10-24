@@ -16,7 +16,7 @@ extends Node
 # What it can't stop: a "decompression bomb" crashes the game while it unpacks the packet, before any mod sees it.
 # A server running Packet Guard bans whoever sends one.
 
-const VERSION = "1.3.0"
+const VERSION = "1.3.1"
 const MAX_TEXT = 4096              # the longest text the real game ever sends in an action is a chat bubble (~512)
 const MAX_ACTION_NAME = 256
 const KEEP_FOR_MISSING = 32        # actions kept for a character that isn't here (yet): the game dumps the pile past 128
@@ -178,7 +178,14 @@ func _attack_in(entry, here = {}):
 			return "the sound exploit (a sound named \"" + sound.left(40) + "\")"
 	# names looked up in the game's lists and nodes must be text
 	if action in ["_play_particle", "_face_emote", "_talk", "_sync_create_bubble", "_sync_level_bubble"]:
-		if typeof(params) != TYPE_ARRAY or params.size() == 0 or typeof(params[0]) != TYPE_STRING:
+		# the game sends the level-up bubble with no values at all, so that one may be empty
+		var may_be_empty = action == "_sync_level_bubble"
+		if typeof(params) != TYPE_ARRAY:
+			return "the wrong kind of value in " + action.left(40)
+		if params.size() == 0:
+			if not may_be_empty:
+				return "the wrong kind of value in " + action.left(40)
+		elif typeof(params[0]) != TYPE_STRING:
 			return "the wrong kind of value in " + action.left(40)
 	var longest = _longest_text(params, 0)
 	if longest > MAX_TEXT:
