@@ -16,7 +16,7 @@ extends Node
 # What it can't stop: a "decompression bomb" crashes the game while it unpacks the packet, before any mod sees it.
 # A server running Packet Guard bans whoever sends one.
 
-const VERSION = "1.2.0"
+const VERSION = "1.3.0"
 const MAX_TEXT = 4096              # the longest text the real game ever sends in an action is a chat bubble (~512)
 const MAX_ACTION_NAME = 256
 const KEEP_FOR_MISSING = 32        # actions kept for a character that isn't here (yet): the game dumps the pile past 128
@@ -26,6 +26,8 @@ const BACKUPS_KEPT = 5             # per save slot
 const BACKUP_EVERY = 120.0         # seconds; only when the save changed
 const SLOTS = 4
 const BIG_LOG = 50 * 1024 * 1024   # old log files bigger than this are deleted at start
+const LOG_CHECK_EVERY = 2.0        # seconds
+const LOG_ALARM = 6 * 1024 * 1024  # the log growing faster than this in one check is an attack (a normal session writes a few KB)
 
 var safe_sound = RegEx.new()
 var blocked = {}        # steam id -> why, this session
@@ -34,6 +36,9 @@ var backup_timer = 0.0
 var backup_seen = {}    # slot -> modified time of the save last backed up
 var pending_notes = []  # shown once the game can show notifications
 var clock = 0.0
+var log_timer = 0.0
+var log_size_before = -1
+var log_noted = false
 
 
 func _ready():
@@ -57,6 +62,57 @@ func _process(delta):
 		backup_timer = 0.0
 		_backup_saves()
 	_show_notes()
+	log_timer += delta
+	if log_timer >= LOG_CHECK_EVERY:
+		log_timer = 0.0
+		_watch_log()
+
+
+# --- the log filling up ---
+# The game prints whole packets into godot.log when it thinks they're malformed, and those never reach the action queue
+# above. When the log suddenly grows, whoever is sending the most packets is the likely source and gets blocked.
+
+func _current_log():
+	var log_path = str(ProjectSettings.get_setting("logging/file_logging/log_path"))
+	if log_path == "" or log_path == "Null":
+		log_path = "user://logs/godot.log"
+	return log_path
+
+
+func _watch_log():
+	var file = File.new()
+	var path = _current_log()
+	if not file.file_exists(path) or file.open(path, File.READ) != OK:
+		return
+	var size = file.get_len()
+	file.close()
+	var grew = size - log_size_before if log_size_before >= 0 else 0
+	log_size_before = size
+	if grew < LOG_ALARM:
+		return
+	var net = get_node_or_null("/root/Network")
+	if net == null or typeof(net.get("FLUSH_PACKET_INFORMATION")) != TYPE_DICTIONARY:
+		return
+	var owner_id = 0
+	if Engine.has_singleton("Steam") and int(net.get("STEAM_LOBBY_ID")) > 0:
+		var steam = Engine.get_singleton("Steam")
+		if steam.has_method("getLobbyOwner"):
+			owner_id = int(steam.getLobbyOwner(net.STEAM_LOBBY_ID))
+	var best = 0
+	var best_count = 0
+	for sender in net.FLUSH_PACKET_INFORMATION.keys():
+		var id = int(sender)
+		if id == int(net.STEAM_ID) or id == owner_id or blocked.has(id):
+			continue
+		var count = int(net.FLUSH_PACKET_INFORMATION[sender])
+		if count > best_count:
+			best = id
+			best_count = count
+	if best != 0 and best_count >= 20:
+		_block(best, "the log flood (godot.log grew " + str(grew / (1024 * 1024)) + " MB in a few seconds while they were sending " + str(best_count) + " packets)")
+	elif not log_noted:
+		log_noted = true
+		pending_notes.append("Your godot.log is growing very fast (" + str(grew / (1024 * 1024)) + " MB in a few seconds) and Griefer Shield could not tell who is doing it. Leave the game and free some disk space if it keeps going.")
 
 
 # --- checking every action before the game runs it ---
