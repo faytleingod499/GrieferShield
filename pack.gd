@@ -14,6 +14,6 @@ func _init():
 	var packer = PCKPacker.new()
 	packer.pck_start(out, 32)
 	for name in FILES:
-		packer.add_file("res://mods/TailSizeFix/" + name, src.plus_file(name))
+		packer.add_file("res://mods/GrieferShield/" + name, src.plus_file(name))
 	print("pack result: ", packer.flush(true))
 	quit()
