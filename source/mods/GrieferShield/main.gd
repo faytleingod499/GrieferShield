@@ -16,7 +16,7 @@ extends Node
 # What it can't stop: a "decompression bomb" crashes the game while it unpacks the packet, before any mod sees it.
 # A server running Packet Guard bans whoever sends one.
 
-const VERSION = "1.3.1"
+const VERSION = "1.3.2"
 const MAX_TEXT = 4096              # the longest text the real game ever sends in an action is a chat bubble (~512)
 const MAX_ACTION_NAME = 256
 const KEEP_FOR_MISSING = 32        # actions kept for a character that isn't here (yet): the game dumps the pile past 128
@@ -42,7 +42,9 @@ var log_noted = false
 
 
 func _ready():
-	safe_sound.compile("^[A-Za-z0-9_\\-]{1,48}$")
+	# modded species name their sounds after the species ("bark_Awesome Possum_species_possum"), so spaces and accents are normal;
+	# what a node path needs is / . : @ or %, and those (and control characters) are what gets refused
+	safe_sound.compile("^[^/\\\\.:@%\"\\x00-\\x1f]{1,96}$")
 	# Run after the game reads its packets and before any character acts on them: the network reads first, then this,
 	# then everything else.
 	var net = get_node_or_null("/root/Network")

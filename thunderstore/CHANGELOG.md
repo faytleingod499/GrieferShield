@@ -1,3 +1,6 @@
+## 1.3.2
+- Fixed: players using modded species (for example "Awesome Possum") were treated as attackers because their species' sound names have spaces. Only sound names that can reach another node (containing / . : @ %) are refused now.
+
 ## 1.3.1
 - Fixes a false positive: the game sends the level-up bubble with no values, and 1.3.0 treated that as an attack and blocked the player who levelled up. Empty level-up bubbles are now allowed.
 
