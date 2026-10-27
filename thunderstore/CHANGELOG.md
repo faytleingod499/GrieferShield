@@ -1,3 +1,13 @@
+## 1.5.0
+- Black box: every packet the game receives is now written to `griefershield_blackbox.log` (in the game's save folder,
+  `%APPDATA%\Godot\app_userdata\webfishing_2_newver`) as it arrives, with who sent it, how big it was, its type and what is
+  inside it. The file is saved packet by packet, so it survives a crash; it keeps the last few minutes (about 6 MB in two
+  files). Suspicious packets (not packed, huge, unknown type, node paths, very long text) are also kept in
+  `griefershield_suspects.log`.
+- If the game ever dies while unpacking a packet, the next start tells you who sent it, keeps a copy of the black box
+  (`griefershield_crash_<time>.log`) and hides that player.
+- Needs the new GrieferShield.dll from this version (it adds two calls to the game's packet reader).
+
 ## 1.4.0
 - Stops decompression bombs: a tiny packet that unpacks into gigabytes and crashes the game while it is being read, before
   any mod can look at it. The game unpacked packets with no size limit; Griefer Shield now sets one (8 MB, far more than

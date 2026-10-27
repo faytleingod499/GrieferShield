@@ -17,7 +17,7 @@ extends Node
 # script sees it) is stopped by the C# part of this mod (GrieferShield.dll), which puts a size limit on the game's unpacking.
 # A server running Packet Guard also bans whoever sends one.
 
-const VERSION = "1.4.0"
+const VERSION = "1.5.0"
 const MAX_TEXT = 4096              # the longest text the real game ever sends in an action is a chat bubble (~512)
 const MAX_ACTION_NAME = 256
 const KEEP_FOR_MISSING = 32        # actions kept for a character that isn't here (yet): the game dumps the pile past 128
@@ -30,6 +30,20 @@ const BIG_LOG = 50 * 1024 * 1024   # old log files bigger than this are deleted 
 const LOG_CHECK_EVERY = 2.0        # seconds
 const LOG_ALARM = 6 * 1024 * 1024  # the log growing faster than this in one check is an attack (a normal session writes a few KB)
 
+# the black box: every packet received is written to a file as it arrives (see "the black box" below)
+const BB_FILE = "user://griefershield_blackbox.log"
+const BB_OLD = "user://griefershield_blackbox_old.log"
+const BB_SUSPECTS = "user://griefershield_suspects.log"
+const BB_MAX = 3 * 1024 * 1024        # the black box is cut at this size (the old half is kept): the last few minutes
+const BB_SUSPECTS_MAX = 256 * 1024
+const BB_CRASHES_KEPT = 3
+const BB_LINE_MAX = 600
+const BB_KNOWN_TYPES = ["handshake", "handshake_request", "server_close", "peer_was_kicked", "client_was_kicked", "peer_was_banned",
+	"client_was_banned", "request_actors", "actor_request_send", "instance_actor", "actor_update", "actor_animation_update",
+	"actor_action", "message", "letter_recieved", "letter_was_accepted", "letter_was_denied", "chalk_packet", "new_player_join",
+	"player_punch", "user_joined_weblobby", "user_left_weblobby", "receive_weblobby", "request_ping", "arena_join"]
+const BB_BIG_TYPES = ["chalk_packet", "actor_request_send", "receive_weblobby", "request_actors"]
+
 var safe_sound = RegEx.new()
 var blocked = {}        # steam id -> why, this session
 var missing_drops = {}  # steam id -> [minute start, count]
@@ -40,6 +54,14 @@ var clock = 0.0
 var log_timer = 0.0
 var log_size_before = -1
 var log_noted = false
+var bb = null            # the black box file, open for the whole session
+var bb_bytes = 0
+var bb_size = 0          # compressed size of the packet being read
+var bb_claimed = -1
+var bb_sender = 0
+var bb_members = {}      # steam id -> name, for the join/leave lines
+var bb_closed = false
+var bb_open = false      # a packet was started but not finished (the game stopped, or refused it, while unpacking)
 
 
 func _ready():
@@ -55,6 +77,7 @@ func _ready():
 	_clean_logs()
 	_restore_broken_saves()
 	_backup_saves()
+	_bb_start()
 
 
 func _process(delta):
@@ -69,6 +92,7 @@ func _process(delta):
 	if log_timer >= LOG_CHECK_EVERY:
 		log_timer = 0.0
 		_watch_log()
+		_bb_watch_members()
 
 
 # --- the log filling up ---
@@ -306,6 +330,305 @@ func _show_notes():
 	for note in pending_notes:
 		data._send_notification(note, 1)
 	pending_notes = []
+
+
+# --- the black box ---
+# The game reads and unpacks each packet in one go, so if a packet kills the game there is nothing left to show which one.
+# The C# part of this mod (GrieferShield.dll) makes the game call blackbox() just before it unpacks a packet and
+# blackbox_packet() right after, and every packet is written to user://griefershield_blackbox.log as it arrives (the file is
+# flushed each time, so it survives a crash). The line is started before the packet is unpacked and finished after, so if
+# the game dies while unpacking, the last line of the file is the unfinished one and names the sender.
+#   <ms> <sender> <packed bytes> <size the packet claims to unpack to> | <type> <key>=<value>...  [!flag ...]
+# Values: s<length>:"text" i<number> f<number> b<0/1> v2/v3 a<count>[...] d<count>{...} NODEPATH! OBJECT!
+# At the next start, if the file doesn't end with EXIT the game did not close normally: the file is copied to
+# griefershield_crash_<time>.log, you get a notification, and if the game died while unpacking a packet its sender is hidden.
+# Packets that look wrong (not packed, absurd size, a type the game doesn't have, text over 1000 chars, node paths) are also
+# written to griefershield_suspects.log, which is kept.
+
+func _bb_start():
+	_bb_check_last_session()
+	var dir = Directory.new()
+	if dir.file_exists(BB_FILE):
+		dir.rename(BB_FILE, BB_OLD) if not dir.file_exists(BB_OLD) else dir.copy(BB_FILE, BB_OLD)
+	bb = File.new()
+	if bb.open(BB_FILE, File.WRITE) != OK:
+		bb = null
+		return
+	bb_bytes = 0
+	_bb_line("START " + VERSION + " " + str(OS.get_unix_time()))
+
+
+func _bb_put(text):
+	if bb == null:
+		return
+	bb.store_string(text)
+	bb.flush()
+	bb_bytes += text.length()
+
+
+func _bb_line(text):
+	_bb_put(text + "\n")
+	if bb_bytes > BB_MAX:
+		_bb_rotate()
+
+
+func _bb_rotate():
+	if bb == null:
+		return
+	bb.close()
+	var dir = Directory.new()
+	if dir.file_exists(BB_OLD):
+		dir.remove(BB_OLD)
+	dir.rename(BB_FILE, BB_OLD)
+	bb = File.new()
+	if bb.open(BB_FILE, File.WRITE) != OK:
+		bb = null
+		return
+	bb_bytes = 0
+
+
+# called by the game's packet reader just before it unpacks a packet
+func blackbox(sender, payload):
+	if bb == null or typeof(payload) != TYPE_RAW_ARRAY:
+		return
+	var n = payload.size()
+	var claimed = -1
+	if n >= 4:
+		# the last four bytes of a gzip stream say how big it unpacks to (a liar can write anything, but it's a hint)
+		claimed = payload[n - 4] | (payload[n - 3] << 8) | (payload[n - 2] << 16) | (payload[n - 1] << 24)
+	if bb_open:
+		_bb_line(" | UNFINISHED (the game stopped reading that packet)")
+	bb_open = true
+	bb_sender = int(sender)
+	bb_size = n
+	bb_claimed = claimed
+	var text = str(OS.get_system_time_msecs()) + " " + str(bb_sender) + " " + str(n) + " " + str(claimed)
+	if n < 18 or payload[0] != 0x1f or payload[1] != 0x8b:
+		text += " NOTGZIP"
+	_bb_put(text)
+
+
+# called right after the packet is unpacked and read
+func blackbox_packet(sender, data):
+	if bb == null:
+		return
+	bb_open = false
+	var flags = []
+	var summary = _bb_summary(data, flags)
+	if bb_size > 20000:
+		flags.append("!bigpacket")
+	if bb_claimed > 262144 and not (typeof(data) == TYPE_DICTIONARY and str(data.get("type", "")) in BB_BIG_TYPES):
+		flags.append("!bigclaim")
+	var line = " | " + summary
+	if not flags.empty():
+		line += "  " + " ".join(flags)
+	_bb_line(line)
+	if not flags.empty():
+		_bb_suspect(str(OS.get_system_time_msecs()) + " " + str(bb_sender) + " " + str(bb_size) + " " + str(bb_claimed) + line)
+
+
+func _bb_suspect(text):
+	var file = File.new()
+	var dir = Directory.new()
+	if file.file_exists(BB_SUSPECTS) and file.open(BB_SUSPECTS, File.READ) == OK:
+		var size = file.get_len()
+		file.close()
+		if size > BB_SUSPECTS_MAX:
+			dir.remove(BB_SUSPECTS)
+	var mode = File.READ_WRITE if file.file_exists(BB_SUSPECTS) else File.WRITE
+	if file.open(BB_SUSPECTS, mode) != OK:
+		return
+	file.seek_end()
+	file.store_line(text.left(BB_LINE_MAX * 2))
+	file.close()
+
+
+func _bb_safe(text, max_len):
+	var out = ""
+	var shown = text.left(max_len)
+	for i in range(shown.length()):
+		var code = shown.ord_at(i)
+		out += "?" if code < 32 or code == 127 or code == 124 else shown[i]
+	if text.length() > max_len:
+		out += "..."
+	return out
+
+
+func _bb_summary(data, flags):
+	if typeof(data) != TYPE_DICTIONARY:
+		flags.append("!notdict")
+		return "NOTDICT t" + str(typeof(data))
+	var kind = data.get("type", null)
+	var out = ""
+	if typeof(kind) != TYPE_STRING:
+		flags.append("!notype")
+		out = "NOTYPE"
+	else:
+		out = _bb_safe(kind, 40)
+		if not kind in BB_KNOWN_TYPES:
+			flags.append("!unknowntype")
+	var keys = data.keys()
+	var shown = 0
+	for k in keys:
+		if typeof(k) == TYPE_STRING and k == "type":
+			continue
+		shown += 1
+		if shown > 14:
+			out += " ...+" + str(keys.size() - 14)
+			break
+		out += " " + _bb_safe(str(k), 24) + "=" + _bb_describe(data[k], 0, flags)
+		if out.length() > BB_LINE_MAX:
+			out = out.left(BB_LINE_MAX) + "..."
+			break
+	return out
+
+
+func _bb_describe(value, depth, flags):
+	match typeof(value):
+		TYPE_NIL:
+			return "nil"
+		TYPE_BOOL:
+			return "b" + ("1" if value else "0")
+		TYPE_INT:
+			return "i" + str(value)
+		TYPE_REAL:
+			return "f" + str(stepify(value, 0.01))
+		TYPE_STRING:
+			if value.length() > 1000 and not flags.has("!longtext"):
+				flags.append("!longtext")
+			return "s" + str(value.length()) + ':"' + _bb_safe(value, 40) + '"'
+		TYPE_VECTOR2:
+			return "v2"
+		TYPE_VECTOR3:
+			return "v3"
+		TYPE_NODE_PATH:
+			if not flags.has("!nodepath"):
+				flags.append("!nodepath")
+			return "NODEPATH!"
+		TYPE_OBJECT, TYPE_RID:
+			if not flags.has("!object"):
+				flags.append("!object")
+			return "OBJECT!"
+		TYPE_ARRAY:
+			var out = "a" + str(value.size())
+			if depth < 2 and value.size() > 0:
+				var parts = []
+				var count = 0
+				for item in value:
+					count += 1
+					if count > 4:
+						parts.append("...")
+						break
+					parts.append(_bb_describe(item, depth + 1, flags))
+				out += "[" + ",".join(parts) + "]"
+			return out
+		TYPE_DICTIONARY:
+			var out = "d" + str(value.size())
+			if depth < 2 and value.size() > 0:
+				var parts = []
+				var count = 0
+				for k in value.keys():
+					count += 1
+					if count > 4:
+						parts.append("...")
+						break
+					parts.append(_bb_safe(str(k), 16) + ":" + _bb_describe(value[k], depth + 1, flags))
+				out += "{" + ",".join(parts) + "}"
+			return out
+	return "t" + str(typeof(value))
+
+
+# who is in the lobby (names go with the Steam ids in the file)
+func _bb_watch_members():
+	if bb == null:
+		return
+	var net = get_node_or_null("/root/Network")
+	if net == null or typeof(net.get("LOBBY_MEMBERS")) != TYPE_ARRAY:
+		return
+	var now = {}
+	for member in net.LOBBY_MEMBERS:
+		if typeof(member) == TYPE_DICTIONARY:
+			now[int(member.get("steam_id", 0))] = str(member.get("steam_name", ""))
+	for id in now.keys():
+		if not bb_members.has(id):
+			_bb_line("JOIN " + str(OS.get_system_time_msecs()) + " " + str(id) + " " + _bb_safe(now[id], 40))
+	for id in bb_members.keys():
+		if not now.has(id):
+			_bb_line("LEAVE " + str(OS.get_system_time_msecs()) + " " + str(id) + " " + _bb_safe(bb_members[id], 40))
+	bb_members = now
+
+
+func _bb_end():
+	if bb != null and not bb_closed:
+		bb_closed = true
+		_bb_line("EXIT " + str(OS.get_unix_time()))
+		bb.close()
+
+
+func _notification(what):
+	if what == NOTIFICATION_WM_QUIT_REQUEST or what == NOTIFICATION_PREDELETE:
+		_bb_end()
+
+
+func _exit_tree():
+	_bb_end()
+
+
+# At start: did the last game end without EXIT? Then keep its file and say what the last packet was.
+func _bb_check_last_session():
+	var file = File.new()
+	if not file.file_exists(BB_FILE) or file.open(BB_FILE, File.READ) != OK:
+		return
+	var length = file.get_len()
+	var start = max(0, length - 6000)
+	file.seek(start)
+	var tail = file.get_buffer(length - start).get_string_from_utf8()
+	file.close()
+	if length < 10 or tail.strip_edges().begins_with("EXIT") or tail.find("\nEXIT ") != -1:
+		return
+	var lines = tail.split("\n")
+	var last = str(lines[lines.size() - 1])
+	var finished = last == ""
+	if finished and lines.size() > 1:
+		last = str(lines[lines.size() - 2])
+	var parts = last.split(" ")
+	var text = "Your last game did not close normally."
+	var culprit = 0
+	if last.begins_with("EXIT") or last.begins_with("START"):
+		return
+	if not finished and parts.size() >= 4 and str(parts[1]).is_valid_integer():
+		culprit = int(parts[1])
+		text += " It stopped while unpacking a packet from " + str(culprit) + " (" + str(parts[2]) + " bytes, claims to unpack to " + str(parts[3]) + ")."
+	elif parts.size() >= 4 and str(parts[1]).is_valid_integer():
+		text += " The last packet it read was from " + str(parts[1]) + ": " + last.right(last.find("|") + 1).strip_edges().left(80)
+	var dir = Directory.new()
+	var copy = "user://griefershield_crash_" + str(OS.get_unix_time()) + ".log"
+	if dir.copy(BB_FILE, copy) == OK:
+		text += " Saved as " + copy.get_file() + "."
+		_bb_prune_crashes()
+	var data = get_node_or_null("/root/PlayerData")
+	if culprit > 0 and data != null and typeof(data.get("players_hidden")) == TYPE_ARRAY and not data.players_hidden.has(culprit):
+		data.players_hidden.append(culprit)
+		text += " That player is now hidden (you can unhide them in the player list)."
+	print("[GrieferShield] ", text)
+	pending_notes.append(text)
+
+
+func _bb_prune_crashes():
+	var dir = Directory.new()
+	if dir.open("user://") != OK:
+		return
+	var names = []
+	dir.list_dir_begin(true, true)
+	var name = dir.get_next()
+	while name != "":
+		if name.begins_with("griefershield_crash_") and name.ends_with(".log"):
+			names.append(name)
+		name = dir.get_next()
+	dir.list_dir_end()
+	names.sort()
+	while names.size() > BB_CRASHES_KEPT:
+		dir.remove("user://" + names.pop_front())
 
 
 # --- saves ---

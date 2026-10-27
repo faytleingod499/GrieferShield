@@ -27,6 +27,14 @@ then on, and you get a notification saying who was blocked and why. You can unhi
   script mod can look at it. The game unpacks packets with no size limit; Griefer Shield (its GrieferShield.dll part)
   sets one, so such a packet is refused and the game carries on. Servers can also ban the sender: Ether's Wolf Park does.
 
+## The black box
+
+Every packet the game receives is written to `griefershield_blackbox.log` in the game's save folder
+(`%APPDATA%\Godot\app_userdata\webfishing_2_newver`), packet by packet, so it is still there after a crash. Each line
+says who sent the packet, how big it was, its type and what it contained. If the game dies while reading a packet, the
+next start tells you who sent it, keeps a copy of the file, and hides that player. It only records packets from other
+players, and only on your computer.
+
 ## What it can't stop
 
 Attacks that only look like normal packets, such as chat spam. Griefer Shield blocks the known tricks, not every
