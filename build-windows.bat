@@ -1,12 +1,13 @@
 @echo off
 rem Builds Griefer Shield (with the packet size limit) into out\GrieferShield-<version>.zip on Windows.
 rem Needs the .NET SDK (8 or newer) and WEBFISHING with GDWeave installed (for GDWeave.dll).
-rem If the game is not in the default Steam folder, set GDWEAVE_PATH to its GDWeave folder first, for example:
+rem It looks in the r2modman profile "Modded" first, then the default Steam folder. For somewhere else, set GDWEAVE_PATH to its GDWeave folder first, for example:
 rem    set GDWEAVE_PATH=D:\Games\WEBFISHING\GDWeave
 setlocal
 cd /d "%~dp0"
 
-if "%GDWEAVE_PATH%"=="" set "GDWEAVE_PATH=C:\Program Files (x86)\Steam\steamapps\common\WEBFISHING\GDWeave"
+if "%GDWEAVE_PATH%"=="" set "GDWEAVE_PATH=%APPDATA%\r2modmanPlus-local\WEBFISHING\profiles\Modded\GDWeave"
+if not exist "%GDWEAVE_PATH%\core\GDWeave.dll" set "GDWEAVE_PATH=C:\Program Files (x86)\Steam\steamapps\common\WEBFISHING\GDWeave"
 if not exist "%GDWEAVE_PATH%\core\GDWeave.dll" (
     echo Could not find "%GDWEAVE_PATH%\core\GDWeave.dll".
     echo Set GDWEAVE_PATH to the GDWeave folder of your WEBFISHING install and run this again.
