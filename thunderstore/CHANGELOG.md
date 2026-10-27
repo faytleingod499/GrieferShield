@@ -1,3 +1,9 @@
+## 1.4.0
+- Stops decompression bombs: a tiny packet that unpacks into gigabytes and crashes the game while it is being read, before
+  any mod can look at it. The game unpacked packets with no size limit; Griefer Shield now sets one (8 MB, far more than
+  the real game ever sends), so a bomb is refused and the game carries on. This needs the new GrieferShield.dll that comes
+  with this version. If the game is updated and the line it patches changes, GDWeave's log says so.
+
 ## 1.3.2
 - Fixed: players using modded species (for example "Awesome Possum") were treated as attackers because their species' sound names have spaces. Only sound names that can reach another node (containing / . : @ %) are refused now.
 

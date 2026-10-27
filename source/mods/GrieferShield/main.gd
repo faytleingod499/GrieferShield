@@ -13,10 +13,11 @@ extends Node
 # game acts on it.
 # It also keeps its own copies of your save slots and puts a broken save back when the game starts, and deletes
 # oversized old log files, so an attack can't cost you your save or your disk space.
-# What it can't stop: a "decompression bomb" crashes the game while it unpacks the packet, before any mod sees it.
-# A server running Packet Guard bans whoever sends one.
+# The decompression bomb (a tiny packet that unpacks to gigabytes and crashes the game while it is being read, before any
+# script sees it) is stopped by the C# part of this mod (GrieferShield.dll), which puts a size limit on the game's unpacking.
+# A server running Packet Guard also bans whoever sends one.
 
-const VERSION = "1.3.2"
+const VERSION = "1.4.0"
 const MAX_TEXT = 4096              # the longest text the real game ever sends in an action is a chat bubble (~512)
 const MAX_ACTION_NAME = 256
 const KEEP_FOR_MISSING = 32        # actions kept for a character that isn't here (yet): the game dumps the pile past 128

@@ -1,8 +1,8 @@
 {
     "name": "Griefer_Shield",
-    "version_number": "1.3.2",
+    "version_number": "1.4.0",
     "website_url": "https://github.com/faytleingod499/GrieferShield",
-    "description": "Protects you from griefers: blocks the sound exploit (map vanishing, white screen), log floods that fill your disk, and action floods, and keeps backups of your saves. Works on any server. This mod was created with the assistance of AI.",
+    "description": "Protects you from griefers: sound exploit (map vanishing), log floods, action floods and decompression-bomb crashes, and keeps backups of your saves. Works on any server. This mod was created with the assistance of AI.",
     "dependencies": [
         "NotNet-GDWeave-2.0.14"
     ]

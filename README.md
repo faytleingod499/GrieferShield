@@ -22,15 +22,21 @@ packets. See `thunderstore/README.md` for what players see.
   `.backup` both fail to load gets the newest good copy written back to both (the game writes both at once, so a full
   disk breaks both).
 - At start, `.log` files other than the current one in the log folder that are over 50 MB are deleted.
-- Not covered: `decompress_dynamic(-1, ...)` in `_read_P2P_Packet` has no size limit, so a decompression bomb crashes
-  the game before any mod runs. The server's Packet Guard (Cove fork) bans the sender.
+- Decompression bombs (1.4.0): `SteamNetwork.gd` calls `decompress_dynamic(-1, ...)` (no size limit) before any script
+  mod runs. The C# part (`source/GrieferShield.Patch`, built into `GrieferShield.dll`) is a GDWeave script mod that
+  rewrites that `-1` into 8 MB when the game loads the script, so the engine refuses a bigger unpack. If the line is not
+  found (game update) GDWeave's log gets a warning. The server's Packet Guard (Cove fork) also bans the sender.
 - Test: `/home/claude/godot/pettest/e_shield.gd`.
 
 ## Building
+The pck (GDScript part) is packed on Linux/anywhere with Godot 3.5:
 ```
 PCK_OUT=$PWD/package/GrieferShield/GrieferShield.pck PCK_SRC_DIR=$PWD/source/mods/GrieferShield godot --path <any project> -s pack.gd
-./build.sh
 ```
+The dll (C# part) needs the .NET SDK and the game's `GDWeave\core\GDWeave.dll`. On Windows just run
+`build-windows.bat`: it compiles the dll and makes `out\GrieferShield-<version>.zip` (Thunderstore layout, pck + dll).
+`build.sh` (Linux) only works when `package/GrieferShield/GrieferShield.dll` already exists. The dll was NOT compiled or
+tested in the Claude sandbox (no .NET there).
 
 ## License
 [MIT](LICENSE)

@@ -23,10 +23,14 @@ then on, and you get a notification saying who was blocked and why. You can unhi
   broken, for example by a full disk, it puts the newest good copy back when the game starts and tells you so.
 - At start it also deletes old log files bigger than 50 MB, so an attack can't keep your disk full.
 
+- **Decompression bombs.** A tiny packet that unpacks to gigabytes crashes the game while it is being read, before any
+  script mod can look at it. The game unpacks packets with no size limit; Griefer Shield (its GrieferShield.dll part)
+  sets one, so such a packet is refused and the game carries on. Servers can also ban the sender: Ether's Wolf Park does.
+
 ## What it can't stop
 
-A "decompression bomb" (a tiny packet that unpacks to gigabytes) crashes the game while it unpacks it, before any
-mod can look at it. Servers can catch the player sending them: Ether's Wolf Park bans them automatically.
+Attacks that only look like normal packets, such as chat spam. Griefer Shield blocks the known tricks, not every
+possible one.
 
 ## License
 
